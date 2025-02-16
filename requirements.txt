@@ -1,0 +1,6 @@
+streamlit
+python-docx
+openai
+pdfplumber
+python-dotenv
+datetime
