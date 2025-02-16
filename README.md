@@ -66,10 +66,9 @@ streamlit run dynamic-form-generation.py
 
 ## **📌 Required API Key**
 This project uses **OpenAI API** for AI-powered text processing.  
-Make sure you have an API key and set it in your environment:
+Make sure you have an API key and set it in your `.env` file:
 ```sh
-export OPENAI_API_KEY="your-api-key"  # macOS/Linux
-set OPENAI_API_KEY="your-api-key"  # Windows
+OPENAI_API_KEY=your-api-key
 ```
 
 ---
