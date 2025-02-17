@@ -45,22 +45,37 @@ def suggest_placeholders_with_ai(text):
     prompt = f"""
     You are an AI assistant helping to extract placeholders from a document.
     You must respond with ONLY a JSON object in this exact format:
-    {{"suggested_placeholders": {{"detected_text": "variable-name"}}}}
-
+    {{"suggested_placeholders": {{
+        "field1": "descriptive-name-1",
+        "field2": "descriptive-name-2"
+    }}}}
+    
+    Rules:
+    1. Each field should be a separate key-value pair
+    2. Use lowercase with hyphens for variable names
+    3. Do not include ${{}} in the names
+    4. Each detected field should be its own entry
+    5. Do not return a list of fields
+    
     Analyze this document and identify implied fields that should be placeholders:
     {text}
     """
 
     try:
         response = openai.chat.completions.create(
-            model="gpt-4-turbo",
-            messages=[{"role": "system", "content": "You are a JSON-only response AI. Never include explanations or text outside the JSON structure."},
-                      {"role": "user", "content": prompt}]
+            model="gpt-4o-mini",  # Changed back to original model
+            messages=[
+                {"role": "system", "content": "You are a JSON-only response AI. Never include explanations or text outside the JSON structure."},
+                {"role": "user", "content": prompt}
+            ]
         )
         
-        # Parse response
+        # Parse response and format each placeholder separately
         parsed_response = json.loads(response.choices[0].message.content)
-        return {k: f"${{{v}}}" for k, v in parsed_response["suggested_placeholders"].items()}  # ✅ Ensure ${variable-name} format
+        return {
+            k: f"${{{v.lower().replace(' ', '-').replace('_', '-')}}}" 
+            for k, v in parsed_response["suggested_placeholders"].items()
+        }
 
     except Exception as e:
         st.error(f"⚠️ OpenAI API error: {str(e)}")
@@ -70,15 +85,20 @@ def suggest_placeholders_with_ai(text):
 def get_llm_placeholder_positions(text, placeholders):
     """Uses LLM to determine where to place accepted placeholders in the document."""
     
+    # Convert placeholders to a formatted string list
+    placeholder_list = "\n".join([f"- ${{{p.strip('${}')}}} " for p in placeholders])
+    
     prompt = f"""
     You are an AI assistant helping to place placeholders in a document.
-    Place these placeholders in appropriate positions in the document: {list(placeholders.keys())}
+    Place these placeholders in appropriate positions in the document:
+    {placeholder_list}
     
     Rules:
     1. Keep all existing placeholders in their current positions
     2. Place new placeholders where they make logical sense
-    3. Use the exact format ${{placeholder_name}} for each placeholder
-    4. Return the complete document with all placeholders properly placed
+    3. Use each placeholder exactly as provided above (e.g., ${{{placeholder_list.split()[0].strip('- ')}}})
+    4. Place each placeholder separately, do not combine them into a list
+    5. Return the complete document with all placeholders properly placed
     
     Original document:
     {text}
@@ -105,7 +125,7 @@ def insert_placeholders_in_docx(doc_path, placeholders):
     
     # Get LLM suggestions for placeholder positions
     formatted_text = get_llm_placeholder_positions(text, placeholders)
-    
+    st.write(formatted_text)
     # Create new document with formatted text
     new_doc = docx.Document()
     for paragraph in formatted_text.split('\n'):
@@ -177,7 +197,7 @@ for ph, formatted_name in st.session_state.placeholders.items():
 st.markdown("### 🧠 AI-Suggested Placeholders")
 for ph, formatted_name in st.session_state.ai_suggestions.items():
     accept = st.checkbox(f"✅ Accept: {formatted_name}", key=f"accept_{ph}")
-
+    st.write(formatted_name)
     if accept:
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
@@ -214,14 +234,29 @@ if st.button("Save Template"):
     
     # ✅ Insert accepted AI & user-defined placeholders into DOCX
     if uploaded_file:
-        placeholder_mapping = {**st.session_state.placeholders, **{k: f"${{{k}}}" for k in st.session_state.accepted_ai_suggestions.keys()}}
-        updated_doc_path = insert_placeholders_in_docx("original_template.docx", placeholder_mapping)
-        st.success("✅ Template configuration saved and document updated!")
+        try:
+            placeholder_mapping = {**st.session_state.placeholders, **{k: f"${{{k}}}" for k in st.session_state.accepted_ai_suggestions.keys()}}
+            updated_doc_path = insert_placeholders_in_docx("original_template.docx", placeholder_mapping)
+            st.success("✅ Template configuration saved and document updated!")
 
-        # Provide preview of the formatted document
-        st.markdown("### 📄 Preview of Formatted Document")
-        with open(updated_doc_path, "rb") as f:
-            st.download_button("📥 Download Updated Template", f, file_name="template.docx")
-
+            # Show preview after successful save
+            if os.path.exists(updated_doc_path):
+                with open(updated_doc_path, "rb") as f:
+                    doc = docx.Document(f)
+                    document_text = "\n".join([para.text for para in doc.paragraphs])
+                
+                # Show document preview
+                st.markdown("### 📄 Document Preview")
+                st.text_area("Document Content", document_text, height=400, disabled=True)
+                
+                # Download button
+                st.download_button(
+                    "📥 Download Updated Template",
+                    f,
+                    file_name="template.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+        except Exception as e:
+            st.error(f"⚠️ Error updating document: {str(e)}")
     else:
         st.success("✅ Template configuration saved!")

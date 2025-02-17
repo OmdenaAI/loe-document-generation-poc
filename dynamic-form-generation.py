@@ -23,35 +23,42 @@ placeholders = template_data.get("placeholders", {})
 
 # ✅ Initialize session state for form data if not exists
 if "form_data" not in st.session_state:
-    # Store form data without ${} in keys but keep mapping to original names
     st.session_state.form_data = {key.strip("${}"): None for key in placeholders}
 
 # ✅ Function to check if a dependent field should be shown
-def should_show_field(field_name, field_info):
+def should_show_field(field_name, field_info, form_data):
     """Returns True if a field should be displayed based on its dependencies."""
-    if not field_info.get("is_conditional"):
-        return True  # Show non-conditional fields
+    
+    if not field_info.get("is_conditional"):  
+        return True  # Always show non-conditional fields
     
     dependent_on = field_info.get("dependent_on")
     if not dependent_on:
         return True  # If no dependency, show field
 
-    # Convert dependent field name to match stripped internal representation
-    dependent_field = dependent_on.strip("${}")
-    parent_value = st.session_state.form_data.get(dependent_field)
+    dependent_field = dependent_on.strip("${}")  # Ensure proper naming
+    parent_value = form_data.get(dependent_field)
 
-    # Show the field only if the parent field is filled
-    return parent_value not in [None, "", [], False]
+    return parent_value not in [None, "", [], False]  # Show field only if parent has value
+
+# ✅ Function to check if a required field should actually be required
+def is_field_required(field_name, field_info, form_data):
+    """Returns True if a field should be required based on its visibility."""
+    
+    # If the field is required, check if it is also visible
+    if field_info.get("required", False):
+        return should_show_field(field_name, field_info, form_data)
+    
+    return False  # If not required, return False by default
 
 # ✅ Dynamic Form UI
 st.write("### ✏️ Fill out the form below:")
 form_data = {}
 
-# Update the form generation loop to properly check dependencies
 for field_name_with_syntax, field_info in placeholders.items():
     field_name = field_name_with_syntax.strip("${}")  # Remove ${} syntax for internal use
 
-    if should_show_field(field_name, field_info):  # Only show if conditions are met
+    if should_show_field(field_name, field_info, st.session_state.form_data):  
         label = f"{field_name} {'*' if field_info['required'] else ''}"
 
         # ✅ Handle different field types
@@ -70,15 +77,16 @@ for field_name_with_syntax, field_info in placeholders.items():
         else:
             form_data[field_name] = st.text_input(label, key=f"input_{field_name}")
 
-        # Store updated values in session state
         st.session_state.form_data[field_name] = form_data[field_name]
 
-# ✅ Function to validate required fields
-def validate_form():
-    """Ensures all required fields are filled before saving."""
+
+# ✅ Modified validation function to account for invisible required fields
+def validate_form(form_data, placeholders):
+    """Ensures all required fields are filled, but ignores hidden required fields."""
+    
     missing_fields = [
         name.strip("${}") for name, info in placeholders.items()
-        if info["required"] and not form_data.get(name.strip("${}"))
+        if is_field_required(name, info, form_data) and not form_data.get(name.strip("${}"))
     ]
     
     if missing_fields:
@@ -86,38 +94,72 @@ def validate_form():
         return False
     return True
 
-# ✅ Document Generation Logic
+# ✅ Function to process document with LLM
+def clean_up_document_with_llm(original_text, filled_data):
+    """Uses LLM to remove sections where optional placeholders are missing."""
+    
+    prompt = f"""
+    You are an AI that formats documents by replacing placeholders with provided data.
+    
+    Instructions:
+    - Replace all placeholders (e.g., ${{field-name}}) with the given values.
+    - If a placeholder is optional and left blank, remove any **sentence, bullet point, or paragraph** that depends on it.
+    - Ensure the document remains **flowing naturally** without empty spaces or missing context.
+    
+    **Original Document:**
+    {original_text}
+    
+    **Filled Data:**
+    {json.dumps(filled_data, indent=4)}
+    
+    Return the **cleaned-up** document.
+    """
+
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[
+                {"role": "system", "content": "You are an expert legal document formatter."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+        st.error(f"⚠️ LLM Error: {str(e)}")
+        return original_text  # Return the original text if LLM fails
+
+# ✅ Document Generation Logic with LLM
 if st.button("📥 Download Final Document"):
-    if validate_form():
+    if validate_form(form_data, placeholders):
         # Save filled data
         with open("filled_data.json", "w") as f:
             json.dump(form_data, f, indent=4)
 
         try:
             doc = docx.Document("template.docx")
-            
-            # Replace placeholders in each paragraph
-            for para in doc.paragraphs:
-                text = para.text
-                for field_name, value in form_data.items():
-                    if value is not None:
-                        # Convert boolean values to Yes/No
-                        if isinstance(value, bool):
-                            value = "Yes" if value else "No"
-                        # Ensure the placeholder is replaced properly
-                        text = text.replace(f"${{{field_name}}}", str(value))
-                para.text = text
-            
-            # Save the updated document
-            output_path = "final_document.docx"
-            doc.save(output_path)
-            
-            st.success("✅ Document generated successfully!")
+            original_text = "\n".join([para.text for para in doc.paragraphs])
 
-            # Provide download button
+            # Process document using LLM
+            cleaned_text = clean_up_document_with_llm(original_text, form_data)
+
+            # ✅ Create new document with cleaned-up text
+            final_doc = docx.Document()
+            for line in cleaned_text.split("\n"):
+                if line.strip():
+                    final_doc.add_paragraph(line)
+            
+            # Save the final document
+            output_path = "final_document.docx"
+            final_doc.save(output_path)
+            
+            st.success("✅ AI-processed document generated successfully!")
+
+            # ✅ Download Button
             with open(output_path, "rb") as f:
                 st.download_button(
-                    "📥 Download Completed Document",
+                    "📥 Download AI-Cleaned Document",
                     f,
                     file_name="final_document.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
