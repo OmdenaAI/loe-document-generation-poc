@@ -6,6 +6,10 @@ import json
 import os
 import openai
 from io import BytesIO
+from markdownify import markdownify
+from bs4 import BeautifulSoup
+import mistune
+
 
 # Set OpenAI API key
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -28,10 +32,43 @@ if "processed_text" not in st.session_state:
 
 st.title("📄 Document Upload & Placeholder Extraction (with AI & Dependencies)")
 
-# ✅ Function to extract text from DOCX
-def extract_text_from_docx(file):
-    doc = docx.Document(file)
-    return "\n".join([para.text for para in doc.paragraphs])
+# ✅ Extract text from DOCX and convert to Markdown
+# ✅ Extract text from DOCX and convert to Markdown
+def extract_text_from_docx(docx_file):
+    """Extract text from DOCX and preserve basic formatting."""
+    doc = docx.Document(docx_file)
+    text = []
+    
+    for para in doc.paragraphs:
+        if para.style.name.startswith('Heading'):
+            level = para.style.name[-1]
+            text.append(f"{'#' * int(level)} {para.text}")
+        else:
+            text.append(para.text)
+    
+    return "\n\n".join(text)
+
+def convert_markdown_to_docx(markdown_text, output_path="updated_template.docx"):
+    """Converts Markdown text to a formatted DOCX document."""
+    doc = docx.Document()
+    
+    # Split the markdown text into lines
+    lines = markdown_text.split('\n')
+    
+    for line in lines:
+        if line.strip():  # Skip empty lines
+            # Check for headings
+            if line.startswith('#'):
+                level = len(line.split()[0])  # Count the number of #
+                text = line.lstrip('#').strip()
+                doc.add_paragraph(text, style=f'Heading {min(level, 9)}')
+            else:
+                # Regular paragraph
+                doc.add_paragraph(line)
+    
+    # Save the document
+    doc.save(output_path)
+    return output_path
 
 # ✅ Function to extract existing placeholders using regex
 def extract_placeholders(text):
@@ -39,7 +76,7 @@ def extract_placeholders(text):
     return list(set(re.findall(r"\$\{(.*?)\}", text)))
 
 # ✅ Function to get AI-suggested placeholders
-def suggest_placeholders_with_ai(text):
+def suggest_placeholders_with_ai(markdown_text):
     """Uses LLM to detect additional placeholders that may be missing."""
     
     prompt = f"""
@@ -58,7 +95,7 @@ def suggest_placeholders_with_ai(text):
     5. Do not return a list of fields
     
     Analyze this document and identify implied fields that should be placeholders:
-    {text}
+    {markdown_text}
     """
 
     try:
@@ -106,7 +143,7 @@ def get_llm_placeholder_positions(text, placeholders):
 
     try:
         response = openai.chat.completions.create(
-            model="gpt-4-turbo",
+            model="gpt-4-mini",
             messages=[
                 {"role": "system", "content": "You are a document formatting AI. Return only the formatted document text."},
                 {"role": "user", "content": prompt}
@@ -118,22 +155,38 @@ def get_llm_placeholder_positions(text, placeholders):
         return text
 
 # Update the insert_placeholders_in_docx function
-def insert_placeholders_in_docx(doc_path, placeholders):
-    """Inserts AI-suggested & user-defined placeholders into the document."""
-    doc = docx.Document(doc_path)
-    text = "\n".join([para.text for para in doc.paragraphs])
+def insert_placeholders_in_markdown(markdown_text, placeholders):
+    """Uses LLM to insert placeholders into Markdown text properly."""
     
-    # Get LLM suggestions for placeholder positions
-    formatted_text = get_llm_placeholder_positions(text, placeholders)
-    st.write(formatted_text)
-    # Create new document with formatted text
-    new_doc = docx.Document()
-    for paragraph in formatted_text.split('\n'):
-        if paragraph.strip():
-            new_doc.add_paragraph(paragraph)
+    placeholder_list = "\n".join([f"- {p}" for p in placeholders.keys()])
     
-    new_doc.save("template.docx")
-    return "template.docx"
+    prompt = f"""
+    You are an AI assistant improving a document by inserting placeholders.
+    Place these placeholders where they logically belong:
+    {placeholder_list}
+    
+    **Rules:**
+    1. Keep existing placeholders in their current positions.
+    2. Place new placeholders where they make sense.
+    3. Preserve the original Markdown structure.
+    4. Use the exact placeholder format, e.g., `${{variable-name}}`.
+    5. Return ONLY the updated Markdown document.
+
+    **Original Markdown:**
+    {markdown_text}
+    """
+
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": "You are a document formatting AI. Return only the formatted Markdown."},
+                      {"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+
+    except Exception as e:
+        st.error(f"⚠️ OpenAI API error: {str(e)}")
+        return markdown_text  # Return original if error occurs
 
 # ✅ Save uploaded file for later use
 def save_uploaded_file(uploaded_file, filename):
@@ -146,16 +199,19 @@ uploaded_file = st.file_uploader("Upload a Document (DOCX)", type=["docx"])
 if uploaded_file and not st.session_state.processed_text:
     # Save original template
     save_uploaded_file(uploaded_file, "original_template.docx")
-    text = extract_text_from_docx(uploaded_file)
+    markdown_output = extract_text_from_docx(uploaded_file)
 
+    # Store in session state
+    st.session_state.processed_text = markdown_output
+    st.session_state.placeholders = {ph: f"${{{ph}}}" for ph in extract_placeholders(markdown_output)}
     # Process text and store results in session state
-    st.session_state.processed_text = text
-    st.session_state.placeholders = {ph: f"${{{ph}}}" for ph in extract_placeholders(text)}
+    st.session_state.processed_text = markdown_output
+    st.session_state.placeholders = {ph: f"${{{ph}}}" for ph in extract_placeholders(markdown_output)}
     
     # Get AI suggestions only once
     if not st.session_state.ai_suggestions:
         st.write("### 🤖 AI is analyzing the document...")
-        st.session_state.ai_suggestions = suggest_placeholders_with_ai(text)
+        st.session_state.ai_suggestions = suggest_placeholders_with_ai(markdown_output)
 
 # ✅ Ensure all placeholders (existing & AI-suggested) are reviewed before inclusion
 st.markdown("### 📌 Configure Placeholders (Existing & AI-Suggested)")
@@ -226,37 +282,51 @@ st.markdown("---")
 
 # ✅ Save button section
 st.markdown("### 💾 Save Configuration")
+placeholder_settings = {}  # Initialize here
 if st.button("Save Template"):
-    # Save the template configuration
+    # Save template.json with placeholders
     template_data = {"placeholders": {**placeholder_settings, **st.session_state.accepted_ai_suggestions}}
     with open("template.json", "w") as f:
         json.dump(template_data, f, indent=4)
-    
-    # ✅ Insert accepted AI & user-defined placeholders into DOCX
-    if uploaded_file:
-        try:
-            placeholder_mapping = {**st.session_state.placeholders, **{k: f"${{{k}}}" for k in st.session_state.accepted_ai_suggestions.keys()}}
-            updated_doc_path = insert_placeholders_in_docx("original_template.docx", placeholder_mapping)
-            st.success("✅ Template configuration saved and document updated!")
 
-            # Show preview after successful save
-            if os.path.exists(updated_doc_path):
-                with open(updated_doc_path, "rb") as f:
-                    doc = docx.Document(f)
-                    document_text = "\n".join([para.text for para in doc.paragraphs])
-                
-                # Show document preview
-                st.markdown("### 📄 Document Preview")
-                st.text_area("Document Content", document_text, height=400, disabled=True)
-                
-                # Download button
+    # Ensure markdown_output exists in session
+    if "processed_text" in st.session_state:
+        markdown_output = st.session_state.processed_text  # Retrieve stored Markdown
+
+        try:
+            # ✅ Insert placeholders into Markdown
+            placeholder_mapping = {
+                **st.session_state.placeholders,
+                **{k: f"${{{k}}}" for k in st.session_state.accepted_ai_suggestions.keys()}
+            }
+            markdown_output = insert_placeholders_in_markdown(markdown_output, placeholder_mapping)
+
+            # ✅ Store updated Markdown in session state
+            st.session_state.processed_text = markdown_output
+            
+            st.success("✅ Template configuration saved and Markdown updated!")
+
+            # ✅ Show preview of updated Markdown
+            st.markdown("### 📝 Updated Markdown with Placeholders")
+            st.text_area("Updated Document", markdown_output, height=400)
+
+            # ✅ Allow user to download updated Markdown
+            markdown_bytes = BytesIO(markdown_output.encode("utf-8"))
+            st.download_button("📥 Download Updated Markdown", markdown_bytes, file_name="updated_template.md", mime="text/markdown")
+
+            # ✅ Convert Markdown to DOCX
+            updated_doc_path = convert_markdown_to_docx(markdown_output)
+
+            # ✅ Allow user to download the updated DOCX file
+            with open(updated_doc_path, "rb") as doc_file:
                 st.download_button(
-                    "📥 Download Updated Template",
-                    f,
-                    file_name="template.docx",
+                    "📥 Download Updated DOCX",
+                    doc_file,
+                    file_name="updated_template.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
+
         except Exception as e:
-            st.error(f"⚠️ Error updating document: {str(e)}")
+            st.error(f"⚠️ Error updating Markdown or DOCX: {str(e)}")
     else:
-        st.success("✅ Template configuration saved!")
+        st.error("⚠️ No document has been uploaded or processed yet.")
