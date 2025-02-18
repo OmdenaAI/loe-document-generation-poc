@@ -6,7 +6,7 @@ import openai
 from datetime import datetime
 
 # Set OpenAI API Key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = st.secrets.OPENAI_API_KEY #os.getenv("OPENAI_API_KEY")
 
 st.title("📝 Dynamic Form & AI-Powered Document Generation")
 
