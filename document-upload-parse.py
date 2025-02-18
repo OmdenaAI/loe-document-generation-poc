@@ -77,6 +77,8 @@ def convert_markdown_to_docx(markdown_text, output_path="updated_template.docx")
 # ✅ Function to extract existing placeholders using regex
 def extract_placeholders(text):
     """Extracts existing placeholders in ${variable-name} format and ensures uniform structure."""
+    if not text:  # Handle NoneType or empty string
+        return {}
     extracted_placeholders = list(set(re.findall(r"\$\{(.*?)\}", text)))
     
     # Format placeholders in the same structure as AI suggestions
@@ -214,6 +216,7 @@ def save_uploaded_file(uploaded_file, filename):
 uploaded_file = st.file_uploader("Upload a Document (DOCX)", type=["docx"])
 
 if uploaded_file and not st.session_state.processed_text:
+    st.session_state.processed_text = extract_text_from_docx(uploaded_file)
     # Save original template
     save_uploaded_file(uploaded_file, "original_template.docx")
     markdown_output = extract_text_from_docx(uploaded_file)
@@ -232,7 +235,6 @@ if uploaded_file and not st.session_state.processed_text:
 
 # ✅ Ensure all placeholders (existing & AI-suggested) are reviewed before inclusion
 st.markdown("### 📌 Configure Placeholders (Existing & AI-Suggested)")
-placeholder_settings = {}
 
 # ✅ Merge manually extracted and AI-suggested placeholders into a unified list
 all_placeholders = {
@@ -243,26 +245,29 @@ all_placeholder_names = list(all_placeholders.keys())
 
 # ✅ Configure Existing Placeholders
 st.markdown("### 📝 Existing Placeholders (Automatically Extracted)")
-for ph, formatted_name in all_placeholders.items():
+for ph, settings in all_placeholders.items():
     st.markdown(f"#### {ph}")
 
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        data_type = st.selectbox("Type", ["Text", "Date", "Number", "Dropdown", "Checkbox"], key=f"dt_{ph}")
+        data_type = st.selectbox("Type", ["Text", "Date", "Number", "Dropdown", "Checkbox"], 
+                                 key=f"dt_{ph}", index=["Text", "Date", "Number", "Dropdown", "Checkbox"].index(settings["type"]))
     with col2:
-        required = st.checkbox("📍 Required", key=f"req_{ph}")
+        required = st.checkbox("📍 Required", value=settings["required"], key=f"req_{ph}")
     with col3:
-        is_conditional = st.checkbox("🔗 Conditional", key=f"cond_{ph}")
+        is_conditional = st.checkbox("🔗 Conditional", value=settings["is_conditional"], key=f"cond_{ph}")
 
     dependent_on = None
     if is_conditional:
         dependent_on = st.selectbox(
             "This field depends on:",
-            all_placeholder_names,
+            ["None"] + all_placeholder_names,  # Allow user to select 'None'
+            index=(["None"] + all_placeholder_names).index(settings["dependent_on"]) if settings["dependent_on"] else 0,
             key=f"dep_{ph}"
         )
+        dependent_on = None if dependent_on == "None" else dependent_on
 
-   # ✅ Update the placeholder settings with user inputs
+    # ✅ Update the placeholder settings with user inputs
     all_placeholders[ph] = {
         "type": data_type,
         "required": required,
@@ -304,7 +309,7 @@ st.markdown("---")
 # ✅ Save button section
 st.markdown("### 💾 Save Configuration")
 if st.button("Save Template"):
-    # ✅ Save final user-modified placeholders
+    # ✅ Ensure all user modifications are properly saved
     template_data = {"placeholders": all_placeholders}
 
     with open("template.json", "w") as f:
