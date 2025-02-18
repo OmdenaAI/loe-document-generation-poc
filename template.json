@@ -1,16 +1,16 @@
 {
     "placeholders": {
-        "agreement-date": {
-            "type": "Date",
-            "required": false,
-            "is_conditional": false,
-            "dependent_on": null
-        },
         "register0number": {
             "type": "Number",
             "required": true,
             "is_conditional": false,
             "dependent_on": null
+        },
+        "${party2-name}": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
         }
-}
+    }
 }

@@ -6,10 +6,6 @@ import json
 import os
 import openai
 from io import BytesIO
-from markdownify import markdownify
-from bs4 import BeautifulSoup
-import mistune
-
 
 # Set OpenAI API key
 openai.api_key = os.getenv("OPENAI_API_KEY")
