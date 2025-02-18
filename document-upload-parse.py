@@ -52,6 +52,10 @@ def convert_markdown_to_docx(markdown_text, output_path="updated_template.docx")
     """Converts Markdown text to a formatted DOCX document."""
     doc = docx.Document()
     
+     # ✅ Fix: Remove unnecessary Markdown fencing (e.g., ```markdown)
+    markdown_text = re.sub(r"^```[a-zA-Z]*\n", "", markdown_text, flags=re.MULTILINE)  # Remove opening triple backticks
+    markdown_text = re.sub(r"\n```$", "", markdown_text, flags=re.MULTILINE)  # Remove closing triple backticks
+    
     # Split the markdown text into lines
     lines = markdown_text.split('\n')
     
