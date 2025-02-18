@@ -7,7 +7,7 @@ import openai
 import os
 
 # Set OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = st.secrets.OPENAI_API_KEY #os.getenv("OPENAI_API_KEY")
 
 # Initialize session state
 if "template_data" not in st.session_state:
