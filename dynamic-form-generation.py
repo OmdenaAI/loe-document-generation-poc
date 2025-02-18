@@ -104,8 +104,10 @@ def clean_up_document_with_llm(original_text, filled_data):
     Instructions:
     - Replace all placeholders (e.g., ${{field-name}}) with the given values.
     - If a placeholder is optional and left blank, remove any **sentence, bullet point, or paragraph** that depends on it.
-    - Ensure the document remains **flowing naturally** without empty spaces or missing context.
-    
+    - If a placeholder is optional and left blank and there is a section or a block in the document that depends on it, remove the entire section or block.
+     - Ensure the document remains **flowing naturally** without empty spaces or missing context.
+     - For example, if a legal WILL document includes a section for "Children" and the user does not have any children, remove the entire "Children" section and so on.
+    - Another for example, if a legal WILL document includes a section for "Gifts" and the user does not have any gift to distribute, remove the entire "Gift" section and so on.
     **Original Document:**
     {original_text}
     

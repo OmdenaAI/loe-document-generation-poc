@@ -1,8 +1,92 @@
 {
     "placeholders": {
-        "${agreement-date}": {
-            "type": "Date",
+        "Annuities": {
+            "type": "Number",
             "required": true,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "Funeralwishes": {
+            "type": "Text",
+            "required": true,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "SubExecAppointment": {
+            "type": "Text",
+            "required": true,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "Burial": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "GiftOver": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "GiftSpecificProperty": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "SpecificBequests": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "AgeofReceipt": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "LifeInterests": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "GuardianNeeded": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "SpecificChattels": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "TESTATORFULLNAME": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "MaxGifting": {
+            "type": "Text",
+            "required": true,
+            "is_conditional": true,
+            "dependent_on": "GiftOver"
+        },
+        "PeriodofGifting": {
+            "type": "Text",
+            "required": false,
+            "is_conditional": false,
+            "dependent_on": null
+        },
+        "FamilyTrust": {
+            "type": "Text",
+            "required": false,
             "is_conditional": false,
             "dependent_on": null
         }

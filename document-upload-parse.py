@@ -76,8 +76,21 @@ def convert_markdown_to_docx(markdown_text, output_path="updated_template.docx")
 
 # ✅ Function to extract existing placeholders using regex
 def extract_placeholders(text):
-    """Extracts existing placeholders in ${variable-name} format."""
-    return list(set(re.findall(r"\$\{(.*?)\}", text)))
+    """Extracts existing placeholders in ${variable-name} format and ensures uniform structure."""
+    extracted_placeholders = list(set(re.findall(r"\$\{(.*?)\}", text)))
+    
+    # Format placeholders in the same structure as AI suggestions
+    formatted_placeholders = {
+        ph: {
+            "type": "Text",  # Default type
+            "required": False,  # Default required value
+            "is_conditional": False,  # Default conditional status
+            "dependent_on": None  # Default no dependency
+        }
+        for ph in extracted_placeholders
+    }
+    
+    return formatted_placeholders
 
 # ✅ Function to get AI-suggested placeholders
 def suggest_placeholders_with_ai(markdown_text):
@@ -222,13 +235,16 @@ st.markdown("### 📌 Configure Placeholders (Existing & AI-Suggested)")
 placeholder_settings = {}
 
 # ✅ Merge manually extracted and AI-suggested placeholders into a unified list
-all_placeholders = {**st.session_state.placeholders, **st.session_state.accepted_ai_suggestions}
+all_placeholders = {
+    **extract_placeholders(st.session_state.processed_text),  # Extracted placeholders with default values
+    **st.session_state.accepted_ai_suggestions  # AI-suggested placeholders
+}
 all_placeholder_names = list(all_placeholders.keys())
 
 # ✅ Configure Existing Placeholders
 st.markdown("### 📝 Existing Placeholders (Automatically Extracted)")
-for ph, formatted_name in st.session_state.placeholders.items():
-    st.markdown(f"#### {formatted_name}")
+for ph, formatted_name in all_placeholders.items():
+    st.markdown(f"#### {ph}")
 
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
@@ -246,7 +262,8 @@ for ph, formatted_name in st.session_state.placeholders.items():
             key=f"dep_{ph}"
         )
 
-    placeholder_settings[formatted_name] = {
+   # ✅ Update the placeholder settings with user inputs
+    all_placeholders[ph] = {
         "type": data_type,
         "required": required,
         "is_conditional": is_conditional,
@@ -286,28 +303,38 @@ st.markdown("---")
 
 # ✅ Save button section
 st.markdown("### 💾 Save Configuration")
-placeholder_settings = {}  # Initialize here
 if st.button("Save Template"):
-    # Save template.json with placeholders
-    template_data = {"placeholders": {**placeholder_settings, **st.session_state.accepted_ai_suggestions}}
+    # ✅ Save final user-modified placeholders
+    template_data = {"placeholders": all_placeholders}
+
     with open("template.json", "w") as f:
         json.dump(template_data, f, indent=4)
+
+    st.success("✅ Template configuration saved correctly with a consistent format!")
 
     # Ensure markdown_output exists in session
     if "processed_text" in st.session_state:
         markdown_output = st.session_state.processed_text  # Retrieve stored Markdown
 
-        try:
-            # ✅ Insert placeholders into Markdown
-            placeholder_mapping = {
-                **st.session_state.placeholders,
-                **{k: f"${{{k}}}" for k in st.session_state.accepted_ai_suggestions.keys()}
-            }
-            markdown_output = insert_placeholders_in_markdown(markdown_output, placeholder_mapping)
+               # ✅ Determine whether to use LLM
+        if len(st.session_state.accepted_ai_suggestions) > 0:
+            st.write("🔹 AI placeholders accepted – Using LLM to insert them...")
+            try:
+                placeholder_mapping = {
+                    **st.session_state.placeholders,  # Keep document's extracted placeholders
+                    **{k: f"${{{k}}}" for k in st.session_state.accepted_ai_suggestions.keys()}
+                }
+                markdown_output = insert_placeholders_in_markdown(markdown_output, placeholder_mapping)
 
-            # ✅ Store updated Markdown in session state
-            st.session_state.processed_text = markdown_output
-            
+                # ✅ Store updated Markdown in session state
+                st.session_state.processed_text = markdown_output
+                
+            except Exception as e:
+                st.error(f"⚠️ Error inserting AI placeholders: {str(e)}")
+        
+        else:
+            st.write("✅ No AI placeholders accepted – Using extracted placeholders only.")
+
             st.success("✅ Template configuration saved and Markdown updated!")
 
             # ✅ Show preview of updated Markdown
@@ -329,8 +356,5 @@ if st.button("Save Template"):
                     file_name="updated_template.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
-
-        except Exception as e:
-            st.error(f"⚠️ Error updating Markdown or DOCX: {str(e)}")
     else:
         st.error("⚠️ No document has been uploaded or processed yet.")
