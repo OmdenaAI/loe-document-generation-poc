@@ -76,7 +76,7 @@ def suggest_placeholders_with_ai(markdown_text):
         raw_response = response.choices[0].message.content.strip()
 
         # Debugging: Print raw response
-        st.write("🔍 OpenAI Raw Response:", raw_response)
+        #st.write("🔍 OpenAI Raw Response:", raw_response)
 
         # Check for empty response
         if not raw_response:
@@ -206,19 +206,29 @@ for ph in st.session_state.ai_suggestions.keys():
 # ✅ Merge placeholders for JSON & Markdown
 all_placeholders = {**st.session_state.placeholders, **st.session_state.accepted_ai_suggestions}
 
-# ✅ Save JSON & Update Markdown
 if st.button("💾 Save Template"):
+    # ✅ Merge placeholders for JSON & Markdown
+    all_placeholders = {**st.session_state.placeholders, **st.session_state.accepted_ai_suggestions}
+
+    # ✅ Save template as JSON
     with open("template.json", "w") as f:
         json.dump({"placeholders": all_placeholders}, f, indent=4)
     st.success("✅ Template saved!")
 
-    # ✅ Insert AI placeholders into Markdown
-    updated_markdown = insert_placeholders_in_markdown(st.session_state.processed_text, all_placeholders)
+    # ✅ Determine if AI suggestions were accepted
+    if st.session_state.accepted_ai_suggestions:
+        st.write("🔹 AI placeholders accepted – updating document...")
+        updated_markdown = insert_placeholders_in_markdown(st.session_state.processed_text, all_placeholders)
+    else:
+        st.write("✅ No AI placeholders accepted – using extracted placeholders only.")
+        updated_markdown = st.session_state.processed_text
 
-    # ✅ Save & Download Markdown
+    # ✅ Save updated Markdown
+    st.session_state.processed_text = updated_markdown
     markdown_bytes = BytesIO(updated_markdown.encode("utf-8"))
     st.download_button("📥 Download Markdown", markdown_bytes, "updated_template.md", "text/markdown")
 
+    # ✅ Convert to DOCX
     updated_doc_path = convert_markdown_to_docx(updated_markdown)
     with open(updated_doc_path, "rb") as doc_file:
         st.download_button("📥 Download Updated DOCX", doc_file, "updated_template.docx",
