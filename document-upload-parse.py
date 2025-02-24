@@ -379,7 +379,7 @@ with user_tab:
                 st.write(", ".join(empty_fields))
                 st.write("Are you sure you want to proceed with these fields empty? This is a legal document, so please confirm your intent.")
                 st.session_state.proceed = st.button("Confirm and Download")
-
+                st.write(st.session_state.proceed)
             if st.session_state.proceed:
                 try:
                     # Load the template document
