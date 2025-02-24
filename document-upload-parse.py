@@ -353,7 +353,7 @@ with user_tab:
             st.session_state.form_data[field_name] = form_data[field_name]
 
     with st.expander("📑 Document Preview", expanded=True):
-        preview_paragraphs = render_user_preview(doc_file, st.session_state.form_data)
+        preview_paragraphs = render_user_preview("updated_template.docx", st.session_state.form_data)
         st.markdown('<div style="max-height: 400px; overflow-y: auto;">', unsafe_allow_html=True)
         for para in preview_paragraphs:
             st.markdown(para, unsafe_allow_html=True)
