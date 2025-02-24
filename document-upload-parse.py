@@ -139,8 +139,13 @@ def convert_markdown_to_docx(paragraphs, output_path="updated_template.docx"):
             doc.add_paragraph(clean_text, style=f"Heading {min(level, 9)}")
         else:
             doc.add_paragraph(clean_text)
+
+    # Save the document to a BytesIO object
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)  # Reset buffer position to the beginning
     doc.save(output_path)
-    return output_path
+    return buffer
 
 def render_partner_preview(paragraphs, placeholders, accepted_suggestions):
     if not paragraphs:
@@ -315,8 +320,8 @@ with partner_tab:
         # Provide download option for template.json
         json_bytes = BytesIO(json.dumps(st.session_state.template_json, indent=4).encode("utf-8"))
         st.download_button("📥 Download Template JSON", json_bytes, "template.json", "application/json")
-        updated_doc_path = convert_markdown_to_docx(st.session_state.processed_paragraphs)
-        with open(updated_doc_path, "rb") as doc_file:
+        updated_doc = convert_markdown_to_docx(st.session_state.processed_paragraphs)
+        with open(updated_doc, "rb") as doc_file:
             st.download_button("📥 Download Updated DOCX", doc_file, "updated_template.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 # ✅ User Tab Content
@@ -386,15 +391,10 @@ with user_tab:
                         if line.strip():
                             final_doc.add_paragraph(line)
 
-                    # Save to BytesIO instead of disk
-                    buffer = BytesIO()
-                    final_doc.save(buffer)
-                    buffer.seek(0)
-
                     st.success("✅ AI-processed document generated successfully!")
                     st.download_button(
                         label="📥 Download AI-Cleaned Document",
-                        data=buffer,
+                        data=updated_doc,
                         file_name="final_document.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     )
