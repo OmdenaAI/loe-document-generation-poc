@@ -140,14 +140,12 @@ def convert_markdown_to_docx(paragraphs, output_path="updated_template.docx"):
         else:
             doc.add_paragraph(clean_text)
 
-    # Option A: Save to disk
-    doc.save(output_path)
-
-    # Option B: Also create an in-memory buffer if you want:
+    # Save the document to a BytesIO object
     buffer = BytesIO()
     doc.save(buffer)
-    buffer.seek(0)
-    return buffer  # or return output_path
+    buffer.seek(0)  # Reset buffer position to the beginning
+    doc.save(output_path)
+    return output_path
 
 def render_partner_preview(paragraphs, placeholders, accepted_suggestions):
     if not paragraphs:
@@ -322,59 +320,90 @@ with partner_tab:
         # Provide download option for template.json
         json_bytes = BytesIO(json.dumps(st.session_state.template_json, indent=4).encode("utf-8"))
         st.download_button("📥 Download Template JSON", json_bytes, "template.json", "application/json")
-        updated_doc = convert_markdown_to_docx(st.session_state.processed_paragraphs)
-        with open(updated_doc, "rb") as doc_file:
+        updated_doc_path = convert_markdown_to_docx(st.session_state.processed_paragraphs)
+        with open(updated_doc_path, "rb") as doc_file:
             st.download_button("📥 Download Updated DOCX", doc_file, "updated_template.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 # ✅ User Tab Content
 with user_tab:
+    st.header("User Dashboard")
+    st.title("📝 Dynamic Form & AI-Powered Document Generation")
+
+    # Check for template in session_state instead of file
     if not st.session_state.template_json:
-        st.error("No template. Please save a template in the Partner tab.")
+        st.error("❌ No template available. Please save a template in the Partner tab first.")
         st.stop()
+    else:
+        template_data = st.session_state.template_json
 
-    placeholders = st.session_state.template_json.get("placeholders", {})
-    # Build the form
-    for ph, info in placeholders.items():
-        # Render input fields ...
-        pass
+    placeholders = template_data.get("placeholders", {})
+    if set(st.session_state.form_data.keys()) != set(key.strip("${}") for key in placeholders):
+        st.session_state.form_data = {key.strip("${}"): None for key in placeholders}
 
-    # Then the user wants to download final doc
+    st.write("### ✏️ Fill out the form below:")
+    form_data = {}
+    for field_name_with_syntax, field_info in placeholders.items():
+        field_name = field_name_with_syntax.strip("${}")
+        if should_show_field(field_name, field_info, st.session_state.form_data):
+            label = f"{field_name} {'*' if is_field_required(field_name, field_info, st.session_state.form_data) else ''}"
+            if field_info["type"] == "Text":
+                form_data[field_name] = st.text_input(label, key=f"input_{field_name}")
+            elif field_info["type"] == "Number":
+                form_data[field_name] = st.number_input(label, key=f"input_{field_name}")
+            elif field_info["type"] == "Date":
+                selected_date = st.date_input(label, key=f"input_{field_name}")
+                form_data[field_name] = selected_date.strftime('%Y-%m-%d')
+            else:
+                form_data[field_name] = st.text_input(label, key=f"input_{field_name}")
+            st.session_state.form_data[field_name] = form_data[field_name]
+
+    with st.expander("📑 Document Preview", expanded=True):
+        preview_paragraphs = render_user_preview("updated_template.docx", st.session_state.form_data)
+        st.markdown('<div style="max-height: 400px; overflow-y: auto;">', unsafe_allow_html=True)
+        for para in preview_paragraphs:
+            st.markdown(para, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<small>Legend: Green = Filled, Orange = Empty</small>", unsafe_allow_html=True)
+
     if st.button("📥 Download Final Document"):
-        # 1. Validate the form
-        if validate_form(...):
-            # 2. Possibly confirm empty fields
-            empty_fields = [...]
-            # If they confirm, continue:
-            
-            try:
-                # 3. Load the doc from disk
-                doc = docx.Document("updated_template.docx")
-                original_text = "\n".join([p.text for p in doc.paragraphs])
-                
-                # 4. Clean up with LLM
-                filled_data = st.session_state.form_data
-                cleaned_text = clean_up_document_with_llm(original_text, filled_data)
-                
-                # 5. Create final doc in memory
-                final_doc = docx.Document()
-                for line in cleaned_text.split("\n"):
-                    if line.strip():
-                        final_doc.add_paragraph(line)
-                
-                # 6. Convert final doc to BytesIO
-                final_buffer = BytesIO()
-                final_doc.save(final_buffer)
-                final_buffer.seek(0)
+        if validate_form(st.session_state.form_data, placeholders):
+            empty_fields = [
+                name.strip("${}") for name, value in st.session_state.form_data.items()
+                if not value or value in ["", None]
+            ]
+            proceed = True
+            if empty_fields:
+                st.warning("The following placeholders will be left empty:")
+                st.write(", ".join(empty_fields))
+                st.write("Are you sure you want to proceed with these fields empty? This is a legal document, so please confirm your intent.")
+                proceed = st.button("Confirm and Download")
 
-                # 7. Provide the download
-                st.download_button(
-                    "📥 Download AI-Cleaned Document",
-                    data=final_buffer,
-                    file_name="final_document.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
-                
-            except FileNotFoundError:
-                st.error("❌ 'updated_template.docx' not found. Please save the template in the Partner tab first.")
-            except Exception as e:
-                st.error(f"❌ Error generating document: {e}")
+            if proceed:
+                try:
+                    # Load the template document
+                    doc = docx.Document("updated_template.docx")
+                    original_text = "\n".join([para.text for para in doc.paragraphs])
+                    cleaned_text = clean_up_document_with_llm(original_text, st.session_state.form_data)
+
+                    # Create the final document in memory
+                    final_doc = docx.Document()
+                    for line in cleaned_text.split("\n"):
+                        if line.strip():
+                            final_doc.add_paragraph(line)
+
+                    # Save to BytesIO instead of disk
+                    buffer = BytesIO()
+                    final_doc.save(buffer)
+                    buffer.seek(0)
+
+                    st.success("✅ AI-processed document generated successfully!")
+                    st.download_button(
+                        label="📥 Download AI-Cleaned Document",
+                        data=buffer,
+                        file_name="final_document.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                except FileNotFoundError:
+                    st.error("❌ 'updated_template.docx' not found. Please save the template in the Partner tab first.")
+                except Exception as e:
+                    st.error(f"❌ Error generating document: {str(e)}")
