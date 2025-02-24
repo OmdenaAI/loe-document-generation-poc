@@ -373,12 +373,13 @@ with user_tab:
                 name.strip("${}") for name, value in st.session_state.form_data.items()
                 if not value or value in ["", None]
             ]
-            st.session_state.proceed = True
+           
             if empty_fields:
                 st.warning("The following placeholders will be left empty:")
                 st.write(", ".join(empty_fields))
                 st.write("Are you sure you want to proceed with these fields empty? This is a legal document, so please confirm your intent.")
                 st.session_state.proceed = st.button("Confirm and Download")
+                st.session_state.proceed = True
                 st.write(st.session_state.proceed)
             if st.session_state.proceed:
                 try:
