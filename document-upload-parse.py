@@ -7,8 +7,12 @@ import openai
 import os
 from datetime import datetime
 import time
+import hashlib
+import pickle
+from pathlib import Path
+
 # Set OpenAI API key
-openai.api_key = st.secrets.OPENAI_API_KEY
+openai.api_key = os.getenv("OPENAI_API_KEY") #st.secrets.OPENAI_API_KEY
 
 # Initialize session state
 if "template_data" not in st.session_state:
@@ -33,6 +37,14 @@ if "proceed" not in st.session_state:
     st.session_state.proceed = False
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = None
+if "users_db_file" not in st.session_state:
+    st.session_state.users_db_file = "users_db.pkl"
+
 
 # ✅ Partner Tab Functions (unchanged except where noted)
 def extract_paragraphs_from_docx(docx_file):
@@ -281,207 +293,299 @@ def get_ai_response(question, document_text, template_json):
     except Exception as e:
         return f"I'm sorry, I encountered an error: {str(e)}"
 
-# Then, add this as a third tab in your main app section:
-partner_tab, user_tab, chat_tab = st.tabs(["Partner", "User", "Document Assistant"])
-
-
-# ✅ Partner Tab Content
-with partner_tab:
-    st.header("Partner Dashboard")
-    uploaded_file = st.file_uploader("Upload a DOCX file", type=["docx"])
-
-    if uploaded_file and not st.session_state.processed_paragraphs:
-        st.session_state.processed_paragraphs = extract_paragraphs_from_docx(uploaded_file)
-        st.session_state.placeholders = extract_placeholders(st.session_state.processed_paragraphs)
-        if not st.session_state.ai_suggestions:
-            st.write("🤖 AI is analyzing the document...")
-            st.session_state.ai_suggestions = suggest_placeholders_with_ai(st.session_state.processed_paragraphs)
-
-    with st.expander("📑 Document Preview", expanded=True):
-        all_placeholders = {**st.session_state.placeholders, **st.session_state.accepted_ai_suggestions}
-        preview_paragraphs = render_partner_preview(st.session_state.processed_paragraphs, all_placeholders, st.session_state.accepted_ai_suggestions)
-        st.markdown('<div style="max-height: 400px; overflow-y: auto;">', unsafe_allow_html=True)
-        for para in preview_paragraphs:
-            st.markdown(para, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown("<small>Legend: Light blue = Optional, Light red = Required, Gray italic = AI-suggested</small>", unsafe_allow_html=True)
-
-    st.markdown("### 📝 Existing Placeholders")
-    for ph, settings in st.session_state.placeholders.items():
-        st.markdown(f"#### {ph}")
-        settings["type"] = st.selectbox("Type", ["Text", "Date", "Number"], key=f"dt_{ph}")
-        settings["required"] = st.checkbox("📍 Required", key=f"req_{ph}")
-        settings["is_conditional"] = st.checkbox("🔗 Conditional", key=f"cond_{ph}")
-        if settings["is_conditional"]:
-            all_placeholders_list = list(st.session_state.placeholders.keys()) + list(st.session_state.accepted_ai_suggestions.keys())
-            all_placeholders_list = [p for p in all_placeholders_list if p != ph]
-            settings["dependent_on"] = st.multiselect("Depends on:", all_placeholders_list, default=settings["dependent_on"], key=f"dep_{ph}")
-
-    st.markdown("### 🧠 AI-Suggested Placeholders")
-    for ph in st.session_state.ai_suggestions.keys():
-        accept = st.checkbox(f"✅ Accept: {ph}", key=f"accept_{ph}")
-        if accept:
-            settings = {
-                "type": st.selectbox("Type", ["Text", "Date", "Number"], key=f"dt_ai_{ph}"),
-                "required": st.checkbox("📍 Required", key=f"req_ai_{ph}"),
-                "is_conditional": st.checkbox("🔗 Conditional", key=f"cond_ai_{ph}"),
-                "dependent_on": []
+# Add these functions for user authentication
+def get_users_db():
+    users_db_file = Path(st.session_state.users_db_file)
+    if users_db_file.exists():
+        with open(users_db_file, "rb") as f:
+            return pickle.load(f)
+    else:
+        # Create default user if db doesn't exist
+        default_users = {
+            "admin": {
+                "password": hashlib.sha256("admin123".encode()).hexdigest(),
+            },
+            "demo": {
+                "password": hashlib.sha256("demo123".encode()).hexdigest(),
             }
+        }
+        with open(users_db_file, "wb") as f:
+            pickle.dump(default_users, f)
+        return default_users
+
+def save_users_db(users_db):
+    with open(st.session_state.users_db_file, "wb") as f:
+        pickle.dump(users_db, f)
+
+def authenticate_user(username, password):
+    users_db = get_users_db()
+    if username in users_db:
+        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        if users_db[username]["password"] == hashed_password:
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            return True
+    return False
+
+def create_user(username, password):
+    users_db = get_users_db()
+    if username in users_db:
+        return False
+    users_db[username] = {
+        "password": hashlib.sha256(password.encode()).hexdigest()
+    }
+    save_users_db(users_db)
+    return True
+
+def logout_user():
+    st.session_state.authenticated = False
+    st.session_state.username = None
+
+
+# main app to check for authentication first
+st.title("📄 Placeholder Management App")    
+# Login or app display logic
+if not st.session_state.authenticated:
+    login_tab, register_tab = st.tabs(["Login", "Register"])
+    
+    with login_tab:
+        st.header("Login")
+        username = st.text_input("Username", key="login_username")
+        password = st.text_input("Password", type="password", key="login_password")
+        
+        if st.button("Login"):
+            if authenticate_user(username, password):
+                st.success(f"Welcome, {username}!")
+                st.rerun()
+            else:
+                st.error("Invalid username or password")
+
+    with register_tab:
+        st.header("Register")
+        new_username = st.text_input("Username", key="register_username")
+        new_password = st.text_input("Password", type="password", key="register_password")
+        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
+        
+        if st.button("Register"):
+            if new_password != confirm_password:
+                st.error("Passwords do not match")
+            elif not new_username or not new_password:
+                st.error("Username and password cannot be empty")
+            else:
+                if create_user(new_username, new_password):
+                    st.success("Registration successful! You can now login.")
+                else:
+                    st.error("Username already exists")
+else:
+    # Display user info and logout button
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        st.write(f"Logged in as: **{st.session_state.username}**")
+    with col2:
+        if st.button("Logout", key="logout_button"):
+            logout_user()
+            st.rerun()
+
+    # Then, add this as a third tab in your main app section:
+    partner_tab, user_tab, chat_tab = st.tabs(["Partner", "User", "Document Assistant"])
+
+    # ✅ Partner Tab Content
+    with partner_tab:
+        st.header("Partner Dashboard")
+        uploaded_file = st.file_uploader("Upload a DOCX file", type=["docx"])
+
+        if uploaded_file and not st.session_state.processed_paragraphs:
+            st.session_state.processed_paragraphs = extract_paragraphs_from_docx(uploaded_file)
+            st.session_state.placeholders = extract_placeholders(st.session_state.processed_paragraphs)
+            if not st.session_state.ai_suggestions:
+                st.write("🤖 AI is analyzing the document...")
+                st.session_state.ai_suggestions = suggest_placeholders_with_ai(st.session_state.processed_paragraphs)
+
+        with st.expander("📑 Document Preview", expanded=True):
+            all_placeholders = {**st.session_state.placeholders, **st.session_state.accepted_ai_suggestions}
+            preview_paragraphs = render_partner_preview(st.session_state.processed_paragraphs, all_placeholders, st.session_state.accepted_ai_suggestions)
+            st.markdown('<div style="max-height: 400px; overflow-y: auto;">', unsafe_allow_html=True)
+            for para in preview_paragraphs:
+                st.markdown(para, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("<small>Legend: Light blue = Optional, Light red = Required, Gray italic = AI-suggested</small>", unsafe_allow_html=True)
+
+        st.markdown("### 📝 Existing Placeholders")
+        for ph, settings in st.session_state.placeholders.items():
+            st.markdown(f"#### {ph}")
+            settings["type"] = st.selectbox("Type", ["Text", "Date", "Number"], key=f"dt_{ph}")
+            settings["required"] = st.checkbox("📍 Required", key=f"req_{ph}")
+            settings["is_conditional"] = st.checkbox("🔗 Conditional", key=f"cond_{ph}")
             if settings["is_conditional"]:
                 all_placeholders_list = list(st.session_state.placeholders.keys()) + list(st.session_state.accepted_ai_suggestions.keys())
                 all_placeholders_list = [p for p in all_placeholders_list if p != ph]
-                settings["dependent_on"] = st.multiselect("Depends on:", all_placeholders_list, default=settings["dependent_on"], key=f"dep_ai_{ph}")
-            st.session_state.accepted_ai_suggestions[ph] = settings
+                settings["dependent_on"] = st.multiselect("Depends on:", all_placeholders_list, default=settings["dependent_on"], key=f"dep_{ph}")
 
-    all_placeholders = {**st.session_state.placeholders, **st.session_state.accepted_ai_suggestions}
+        st.markdown("### 🧠 AI-Suggested Placeholders")
+        for ph in st.session_state.ai_suggestions.keys():
+            accept = st.checkbox(f"✅ Accept: {ph}", key=f"accept_{ph}")
+            if accept:
+                settings = {
+                    "type": st.selectbox("Type", ["Text", "Date", "Number"], key=f"dt_ai_{ph}"),
+                    "required": st.checkbox("📍 Required", key=f"req_ai_{ph}"),
+                    "is_conditional": st.checkbox("🔗 Conditional", key=f"cond_ai_{ph}"),
+                    "dependent_on": []
+                }
+                if settings["is_conditional"]:
+                    all_placeholders_list = list(st.session_state.placeholders.keys()) + list(st.session_state.accepted_ai_suggestions.keys())
+                    all_placeholders_list = [p for p in all_placeholders_list if p != ph]
+                    settings["dependent_on"] = st.multiselect("Depends on:", all_placeholders_list, default=settings["dependent_on"], key=f"dep_ai_{ph}")
+                st.session_state.accepted_ai_suggestions[ph] = settings
 
-    if st.button("💾 Save Template"):
         all_placeholders = {**st.session_state.placeholders, **st.session_state.accepted_ai_suggestions}
-        # Save to session_state instead of file
-        st.session_state.template_json = {"placeholders": all_placeholders}
-        st.success("✅ Template saved!")
-        if st.session_state.accepted_ai_suggestions:
-            st.write("🔹 AI placeholders accepted – updating document...")
-            updated_paragraphs = insert_placeholders_in_markdown(st.session_state.processed_paragraphs, all_placeholders)
-        else:
-            st.write("✅ No AI placeholders accepted – using extracted placeholders only.")
-            updated_paragraphs = st.session_state.processed_paragraphs
-        if updated_paragraphs and isinstance(updated_paragraphs[0], str):
-            updated_paragraphs = [{"text": para, "style": "Normal"} for para in updated_paragraphs]
-        st.session_state.processed_paragraphs = updated_paragraphs
 
-        # Provide download option for template.json
-        json_bytes = BytesIO(json.dumps(st.session_state.template_json, indent=4).encode("utf-8"))
-        st.download_button("📥 Download Template JSON", json_bytes, "template.json", "application/json")
-        updated_doc_path = convert_markdown_to_docx(st.session_state.processed_paragraphs)
-        with open(updated_doc_path, "rb") as doc_file:
-            st.download_button("📥 Download Updated DOCX", doc_file, "updated_template.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-
-# ✅ User Tab Content
-with user_tab:
-    st.header("User Dashboard")
-    st.title("📝 Dynamic Form & AI-Powered Document Generation")
-
-    # Check for template in session_state instead of file
-    if not st.session_state.template_json:
-        st.error("❌ No template available. Please save a template in the Partner tab first.")
-        st.stop()
-    else:
-        template_data = st.session_state.template_json
-
-    placeholders = template_data.get("placeholders", {})
-    if set(st.session_state.form_data.keys()) != set(key.strip("${}") for key in placeholders):
-        st.session_state.form_data = {key.strip("${}"): None for key in placeholders}
-
-    st.write("### ✏️ Fill out the form below:")
-    form_data = {}
-    for field_name_with_syntax, field_info in placeholders.items():
-        field_name = field_name_with_syntax.strip("${}")
-        if should_show_field(field_name, field_info, st.session_state.form_data):
-            label = f"{field_name} {'*' if is_field_required(field_name, field_info, st.session_state.form_data) else ''}"
-            if field_info["type"] == "Text":
-                form_data[field_name] = st.text_input(label, key=f"input_{field_name}")
-            elif field_info["type"] == "Number":
-                form_data[field_name] = st.number_input(label, key=f"input_{field_name}")
-            elif field_info["type"] == "Date":
-                selected_date = st.date_input(label, key=f"input_{field_name}")
-                form_data[field_name] = selected_date.strftime('%Y-%m-%d')
+        if st.button("💾 Save Template"):
+            all_placeholders = {**st.session_state.placeholders, **st.session_state.accepted_ai_suggestions}
+            # Save to session_state instead of file
+            st.session_state.template_json = {"placeholders": all_placeholders}
+            st.success("✅ Template saved!")
+            if st.session_state.accepted_ai_suggestions:
+                st.write("🔹 AI placeholders accepted – updating document...")
+                updated_paragraphs = insert_placeholders_in_markdown(st.session_state.processed_paragraphs, all_placeholders)
             else:
-                form_data[field_name] = st.text_input(label, key=f"input_{field_name}")
-            st.session_state.form_data[field_name] = form_data[field_name]
+                st.write("✅ No AI placeholders accepted – using extracted placeholders only.")
+                updated_paragraphs = st.session_state.processed_paragraphs
+            if updated_paragraphs and isinstance(updated_paragraphs[0], str):
+                updated_paragraphs = [{"text": para, "style": "Normal"} for para in updated_paragraphs]
+            st.session_state.processed_paragraphs = updated_paragraphs
 
-    with st.expander("📑 Document Preview", expanded=True):
-        preview_paragraphs = render_user_preview("updated_template.docx", st.session_state.form_data)
-        st.markdown('<div style="max-height: 400px; overflow-y: auto;">', unsafe_allow_html=True)
-        for para in preview_paragraphs:
-            st.markdown(para, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown("<small>Legend: Green = Filled, Orange = Empty</small>", unsafe_allow_html=True)
+            # Provide download option for template.json
+            json_bytes = BytesIO(json.dumps(st.session_state.template_json, indent=4).encode("utf-8"))
+            st.download_button("📥 Download Template JSON", json_bytes, "template.json", "application/json")
+            updated_doc_path = convert_markdown_to_docx(st.session_state.processed_paragraphs)
+            with open(updated_doc_path, "rb") as doc_file:
+                st.download_button("📥 Download Updated DOCX", doc_file, "updated_template.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-    if st.button("📥 Download Final Document"):
-        if validate_form(st.session_state.form_data, placeholders):
-            empty_fields = [
-                name.strip("${}") for name, value in st.session_state.form_data.items()
-                if not value or value in ["", None]
-            ]
-           
-            if empty_fields:
-                st.warning("The following placeholders will be left empty:")
-                st.write(", ".join(empty_fields))
-                st.write("Are you sure you want to proceed with these fields empty? This is a legal document, so please confirm your intent.")
-                st.session_state.proceed = st.button("Confirm and Download")
-                st.session_state.proceed = True
-                st.write(st.session_state.proceed)
-            if st.session_state.proceed:
-                try:
-                    # Load the template document
-                    doc = docx.Document("updated_template.docx")
-                    original_text = "\n".join([para.text for para in doc.paragraphs])
-                    cleaned_text = clean_up_document_with_llm(original_text, st.session_state.form_data)
+    # ✅ User Tab Content
+    with user_tab:
+        st.header("User Dashboard")
+        st.title("📝 Dynamic Form & AI-Powered Document Generation")
 
-                    # Create the final document in memory
-                    final_doc = docx.Document()
-                    for line in cleaned_text.split("\n"):
-                        if line.strip():
-                            final_doc.add_paragraph(line)
+        # Check for template in session_state instead of file
+        if not st.session_state.template_json:
+            st.error("❌ No template available. Please save a template in the Partner tab first.")
+            st.stop()
+        else:
+            template_data = st.session_state.template_json
 
-                    # Save to BytesIO instead of disk
-                    buffer = BytesIO()
-                    final_doc.save(buffer)
-                    buffer.seek(0)
+        placeholders = template_data.get("placeholders", {})
+        if set(st.session_state.form_data.keys()) != set(key.strip("${}") for key in placeholders):
+            st.session_state.form_data = {key.strip("${}"): None for key in placeholders}
 
-                    st.success("✅ AI-processed document generated successfully!")
-                    st.download_button(
-                        label="📥 Download AI-Cleaned Document",
-                        data=buffer,
-                        file_name="final_document.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                except FileNotFoundError:
-                    st.error("❌ 'updated_template.docx' not found. Please save the template in the Partner tab first.")
-                except Exception as e:
-                    st.error(f"❌ Error generating document: {str(e)}")
-
-#
-with chat_tab:
-    st.header("💬 Document Assistant")
-    
-    # Check if we have a document loaded
-    if not st.session_state.processed_paragraphs:
-        st.warning("⚠️ Please upload a document in the Partner tab first.")
-    else:
-        st.write("Ask questions about the document and I'll help you understand it better.")
-        
-        # Display chat history
-        chat_container = st.container()
-        with chat_container:
-            for message in st.session_state.chat_messages:
-                if message["role"] == "user":
-                    st.markdown(f"**You**: {message['content']}")
+        st.write("### ✏️ Fill out the form below:")
+        form_data = {}
+        for field_name_with_syntax, field_info in placeholders.items():
+            field_name = field_name_with_syntax.strip("${}")
+            if should_show_field(field_name, field_info, st.session_state.form_data):
+                label = f"{field_name} {'*' if is_field_required(field_name, field_info, st.session_state.form_data) else ''}"
+                if field_info["type"] == "Text":
+                    form_data[field_name] = st.text_input(label, key=f"input_{field_name}")
+                elif field_info["type"] == "Number":
+                    form_data[field_name] = st.number_input(label, key=f"input_{field_name}")
+                elif field_info["type"] == "Date":
+                    selected_date = st.date_input(label, key=f"input_{field_name}")
+                    form_data[field_name] = selected_date.strftime('%Y-%m-%d')
                 else:
-                    st.markdown(f"**Assistant**: {message['content']}")
-        
-        # Input for new question
-        user_question = st.text_input("Your question:", key="chat_input")
-        
-        if st.button("Ask") and user_question:
-            # Add user message to chat history
-            st.session_state.chat_messages.append({"role": "user", "content": user_question})
+                    form_data[field_name] = st.text_input(label, key=f"input_{field_name}")
+                st.session_state.form_data[field_name] = form_data[field_name]
+
+        with st.expander("📑 Document Preview", expanded=True):
+            preview_paragraphs = render_user_preview("updated_template.docx", st.session_state.form_data)
+            st.markdown('<div style="max-height: 400px; overflow-y: auto;">', unsafe_allow_html=True)
+            for para in preview_paragraphs:
+                st.markdown(para, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("<small>Legend: Green = Filled, Orange = Empty</small>", unsafe_allow_html=True)
+
+        if st.button("📥 Download Final Document"):
+            if validate_form(st.session_state.form_data, placeholders):
+                empty_fields = [
+                    name.strip("${}") for name, value in st.session_state.form_data.items()
+                    if not value or value in ["", None]
+                ]
             
-            # Get document content
-            doc_content = "\n".join([p["text"] for p in st.session_state.processed_paragraphs])
-            template_data = st.session_state.template_json if st.session_state.template_json else {"placeholders": {}}
+                if empty_fields:
+                    st.warning("The following placeholders will be left empty:")
+                    st.write(", ".join(empty_fields))
+                    st.write("Are you sure you want to proceed with these fields empty? This is a legal document, so please confirm your intent.")
+                    st.session_state.proceed = st.button("Confirm and Download")
+                    st.session_state.proceed = True
+                    st.write(st.session_state.proceed)
+                if st.session_state.proceed:
+                    try:
+                        # Load the template document
+                        doc = docx.Document("updated_template.docx")
+                        original_text = "\n".join([para.text for para in doc.paragraphs])
+                        cleaned_text = clean_up_document_with_llm(original_text, st.session_state.form_data)
+
+                        # Create the final document in memory
+                        final_doc = docx.Document()
+                        for line in cleaned_text.split("\n"):
+                            if line.strip():
+                                final_doc.add_paragraph(line)
+
+                        # Save to BytesIO instead of disk
+                        buffer = BytesIO()
+                        final_doc.save(buffer)
+                        buffer.seek(0)
+
+                        st.success("✅ AI-processed document generated successfully!")
+                        st.download_button(
+                            label="📥 Download AI-Cleaned Document",
+                            data=buffer,
+                            file_name="final_document.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    except FileNotFoundError:
+                        st.error("❌ 'updated_template.docx' not found. Please save the template in the Partner tab first.")
+                    except Exception as e:
+                        st.error(f"❌ Error generating document: {str(e)}")
+
+    #
+    with chat_tab:
+        st.header("💬 Document Assistant")
+        
+        # Check if we have a document loaded
+        if not st.session_state.processed_paragraphs:
+            st.warning("⚠️ Please upload a document in the Partner tab first.")
+        else:
+            st.write("Ask questions about the document and I'll help you understand it better.")
             
-            # Show "thinking" message
+            # Display chat history
+            chat_container = st.container()
             with chat_container:
-                thinking_msg = st.markdown("*Thinking...*")
+                for message in st.session_state.chat_messages:
+                    if message["role"] == "user":
+                        st.markdown(f"**You**: {message['content']}")
+                    else:
+                        st.markdown(f"**Assistant**: {message['content']}")
             
-            # Get AI response
-            ai_response = get_ai_response(user_question, doc_content, template_data)
+            # Input for new question
+            user_question = st.text_input("Your question:", key="chat_input")
             
-            # Remove thinking message and add AI response
-            thinking_msg.empty()
-            st.session_state.chat_messages.append({"role": "assistant", "content": ai_response})
-            
-            # Force refresh to show new messages
-            st.rerun()
+            if st.button("Ask") and user_question:
+                # Add user message to chat history
+                st.session_state.chat_messages.append({"role": "user", "content": user_question})
+                
+                # Get document content
+                doc_content = "\n".join([p["text"] for p in st.session_state.processed_paragraphs])
+                template_data = st.session_state.template_json if st.session_state.template_json else {"placeholders": {}}
+                
+                # Show "thinking" message
+                with chat_container:
+                    thinking_msg = st.markdown("*Thinking...*")
+                
+                # Get AI response
+                ai_response = get_ai_response(user_question, doc_content, template_data)
+                
+                # Remove thinking message and add AI response
+                thinking_msg.empty()
+                st.session_state.chat_messages.append({"role": "assistant", "content": ai_response})
+                
+                # Force refresh to show new messages
+                st.rerun()
