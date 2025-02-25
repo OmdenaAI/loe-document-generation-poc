@@ -6,9 +6,9 @@ from io import BytesIO
 import openai
 import os
 from datetime import datetime
-
+import time
 # Set OpenAI API key
-openai.api_key = st.secrets.OPENAI_API_KEY
+openai.api_key = os.getenv("OPENAI_API_KEY") #st.secrets.OPENAI_API_KEY
 
 # Initialize session state
 if "template_data" not in st.session_state:
@@ -31,6 +31,8 @@ if "template_json" not in st.session_state:  # New: Store template.json in memor
     st.session_state.template_json = None
 if "proceed" not in st.session_state:
     st.session_state.proceed = False
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
 
 # ✅ Partner Tab Functions (unchanged except where noted)
 def extract_paragraphs_from_docx(docx_file):
@@ -250,9 +252,38 @@ def clean_up_document_with_llm(original_text, filled_data):
         st.error(f"⚠️ LLM Error: {str(e)}")
         return original_text
 
-# Main app with tabs
-st.title("📄 Placeholder Management App")
-partner_tab, user_tab = st.tabs(["Partner", "User"])
+
+# Chatbot Function
+def get_ai_response(question, document_text, template_json):
+    prompt = f"""
+    You are a helpful assistant that answers questions about document templates.
+    Answer ONLY questions related to the document content and template structure.
+    If asked about topics unrelated to the document, politely redirect to document-related topics.
+    
+    Document Content:
+    {document_text}
+    
+    Template Structure:
+    {json.dumps(template_json, indent=2)}
+    
+    User Question: {question}
+    """
+    
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a document assistant that only answers questions related to the provided document."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"I'm sorry, I encountered an error: {str(e)}"
+
+# Then, add this as a third tab in your main app section:
+partner_tab, user_tab, chat_tab = st.tabs(["Partner", "User", "Document Assistant"])
+
 
 # ✅ Partner Tab Content
 with partner_tab:
@@ -410,3 +441,47 @@ with user_tab:
                     st.error("❌ 'updated_template.docx' not found. Please save the template in the Partner tab first.")
                 except Exception as e:
                     st.error(f"❌ Error generating document: {str(e)}")
+
+#
+with chat_tab:
+    st.header("💬 Document Assistant")
+    
+    # Check if we have a document loaded
+    if not st.session_state.processed_paragraphs:
+        st.warning("⚠️ Please upload a document in the Partner tab first.")
+    else:
+        st.write("Ask questions about the document and I'll help you understand it better.")
+        
+        # Display chat history
+        chat_container = st.container()
+        with chat_container:
+            for message in st.session_state.chat_messages:
+                if message["role"] == "user":
+                    st.markdown(f"**You**: {message['content']}")
+                else:
+                    st.markdown(f"**Assistant**: {message['content']}")
+        
+        # Input for new question
+        user_question = st.text_input("Your question:", key="chat_input")
+        
+        if st.button("Ask") and user_question:
+            # Add user message to chat history
+            st.session_state.chat_messages.append({"role": "user", "content": user_question})
+            
+            # Get document content
+            doc_content = "\n".join([p["text"] for p in st.session_state.processed_paragraphs])
+            template_data = st.session_state.template_json if st.session_state.template_json else {"placeholders": {}}
+            
+            # Show "thinking" message
+            with chat_container:
+                thinking_msg = st.markdown("*Thinking...*")
+            
+            # Get AI response
+            ai_response = get_ai_response(user_question, doc_content, template_data)
+            
+            # Remove thinking message and add AI response
+            thinking_msg.empty()
+            st.session_state.chat_messages.append({"role": "assistant", "content": ai_response})
+            
+            # Force refresh to show new messages
+            st.rerun()
